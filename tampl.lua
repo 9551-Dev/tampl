@@ -164,7 +164,7 @@ local function generate_tokens(str)
             is_number = false
         end
 
-        if char:match("%s") and not is_string and not is_comment and not is_number then
+        if char:match("[%s\t]") and not is_string and not is_comment and not is_number then
             if token ~= "" then tokens[#tokens+1] = token end
             token = ""
         elseif token_lookup[char] and not is_string and not is_number and not is_comment then
