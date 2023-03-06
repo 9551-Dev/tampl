@@ -360,7 +360,7 @@ local function load_template(data)
                 if v.entry == "scope" then
                     code = code .. object.construct(v) .. "\n"
                 else
-                    code = code .. v.name .. " "
+                    code = code .. v.name .. (v.type == "comment" and "\n" or " ")
                 end
             end
         
