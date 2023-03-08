@@ -1,4 +1,4 @@
-local template = {}
+local TEMPLATE_TYPE = {}
 
 local function lookupify(tbl)
     local lookup = {}
@@ -72,7 +72,7 @@ local positioning_types = {
     "HEAD","TAIL","THIS"
 }
 local positioning_handles = {
-    function(tree,position,type,simple_override)
+    function(tree,position,type,simple_override,tail_handle)
         if not simple_override then
             local tree_size = #tree
             for i=tree_size,position,-1 do
@@ -87,7 +87,7 @@ local positioning_handles = {
 
         tree[position] = type
     end,
-    function(tree,position,type,simple_override)
+    function(tree,position,type,simple_override,tail_handle)
         if not simple_override then
             local tree_size = #tree
             for i=tree_size,position,-1 do
@@ -100,15 +100,15 @@ local positioning_handles = {
             end
         end
 
-        tree[position] = type
+        tree[position+(tail_handle or 0)] = type
     end,
-    function(tree,position,type)
+    function(tree,position,type,tail_handle)
         tree[position] = type
     end
 }
 
 local positioning_offsets = {
-    0,1,0
+    0,1,1
 }
 
 local hook_types = {
@@ -122,7 +122,7 @@ local hook_type_handles = {
         positioning(tree,position-1,type,true)
     end,
     function(tree,position,type,positioning)
-        positioning(tree,position,type,true)
+        positioning(tree,position-1,type,true,1)
     end
 }
 
@@ -340,18 +340,31 @@ local function generate_code_tree(tokens)
     return current_scope
 end
 
-local function load_template(data)
-    local tokens = generate_tokens   (data)
-    local tree   = generate_code_tree(tokens)
-
+local function load_template_tree(tree)
     local template_hooks = find_hooks(tree)
 
     local object;object = {
-        inject=function(hook,position,code_tree)
-            local scope = hook.scope
-            for k,v in ipairs(code_tree) do
-                hooks[hook.type](scope,hook.index+k*position.offset,v,position.pos)
+        inject=function(hook_list,position,code)
+            local code_tree      = code
+            local rebuild_on_end = false
+
+            if type(hook_list) ~= "table" then
+                error("Invalid hook",2)
             end
+            if type(code_tree) == "table" and code_tree.type == TEMPLATE_TYPE then
+                code_tree      = code.tree
+                rebuild_on_end = true
+            end
+
+            for k,hook in ipairs(hook_list) do
+                local scope = hook.scope
+                for k,v in ipairs(code_tree) do
+                    hooks[hook.type](scope,hook.index+k*position.offset,v,position.pos)
+                end
+            end
+
+            if rebuild_on_end then object.rebuild() end
+            return object
         end,
         construct=function(input)
             local code = ""
@@ -366,14 +379,47 @@ local function load_template(data)
         
             return code
         end,
-        tree = tree
+        rebuild = function()
+            local reconstructed = load_template_tree(tree)
+
+            for k,v in pairs(reconstructed) do
+                object[k] = v
+            end
+
+            return reconstructed
+        end,
+        tree = tree,
+        type = TEMPLATE_TYPE
     }
 
     for k,v in pairs(template_hooks) do
-        object[("_%s"):format(v.name)] = v
+        local index_name = ("_%s"):format(v.name)
+
+        if not object[index_name] then object[index_name] = {} end
+        local hook_named = object[index_name]
+        
+        hook_named[#hook_named+1] = v
     end
 
     return object
+end
+
+local function load_template_tokens(tokens)
+    return load_template_tree(generate_code_tree(tokens))
+end
+
+local function load_template(data)
+    return load_template_tokens(generate_tokens(data))
+end
+
+
+local function load_template_file(path)
+    local file = fs.open(path,"r")
+    local data = file.readAll()
+
+    file.close()
+
+    return load_template_tokens(generate_tokens(data))
 end
 
 local function parse_code_block(data)
@@ -388,7 +434,10 @@ local function inject_table_position(tp)
 end
 
 return {
-    new   = load_template,
-    parse = parse_code_block,
-    At    = inject_table_position
+    new         = load_template,
+    from_file   = load_template_file,
+    from_tokens = load_template_tokens,
+    from_tree   = load_template_tree,
+    parse       = parse_code_block,
+    At          = inject_table_position
 }
